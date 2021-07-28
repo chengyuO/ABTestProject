@@ -1,0 +1,705 @@
+---
+output: 
+  pdf_document:
+    fig_caption: TRUE
+    number_sections: TRUE
+fontsize: 11pt
+header-includes:
+- \usepackage{floatrow}
+- \usepackage{caption}
+- \captionsetup[figure]{name=Figure}
+- \floatsetup[figure]{capposition=top}
+- \floatsetup[table]{capposition=top}
+- \floatplacement{figure}{H}
+- \floatplacement{table}{H}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r set up, include=FALSE}
+source("Set up.R")
+# global R markdown settings
+# requires local laTex engine to render a pdf
+opts_chunk$set(echo=FALSE, message=FALSE, warning = FALSE)
+```
+
+```{r figure player distribution, fig.width=5, fig.height= 2, fig.align="center", fig.cap="Distribution of player type in A/B group"}
+# bar plot: new vs returning distribution in A/B
+barplot_AB_player_type <-
+  assignment_table %>%
+  ggplot() +
+  geom_bar(aes(x = abtest_group, fill = player_type),
+           position = "fill",
+           width = 0.5) +
+  scale_fill_ghibli_d("YesterdayMedium", direction = -1) +
+  theme_minimal() +
+  theme(legend.position = "right",
+        text = element_text(size=10, family = "serif")) +
+  scale_y_continuous(labels = scales::percent) +
+  xlab("Group") +
+  ylab("Percentage") +
+  labs(fill = "Player Type")
+
+barplot_AB_player_type 
+```
+
+```{r table player type distribution,fig.align='center',include=FALSE}
+# frequency of player type in A/B
+player_type_freq <-
+  assignment_table %$%
+  table(abtest_group, player_type) %>%
+  as.data.frame.matrix()
+
+# proportion of player type in A/B
+player_type_prop <-
+  assignment_table %$%
+  table(abtest_group, player_type) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame.matrix()
+
+colnames(player_type_prop) %<>%
+  paste("(% in Group)")
+
+# distribution of player types table
+(100 * player_type_prop) %>%
+  rownames_to_column() %>%
+  rename(`Group` = "rowname")
+```
+
+```{r conversion rate derivation, fig.align='center',include=FALSE}
+# days needed to convert 
+assignment_table %<>% 
+  mutate(time_to_conversion=as.numeric(conversion_date - install_date))
+
+# >90% converted within 8 days, 19 day seems reasonable for experiment time length
+assignment_table %$% 
+  quantile(time_to_conversion, probs = seq(0,1,0.1), na.rm = TRUE)
+
+# keep only conversions happened after/on 2017-05-04
+conversion_in_experiment <-
+  assignment_table %>%
+  # filter out players who have converted before the experiment
+  filter(conversion_in_experiment != "converted before")
+
+# overall conversion table
+conversion_in_experiment %$%
+  table(abtest_group, conversion_in_experiment) %>%
+  as.data.frame.matrix() %>%
+  dplyr::select(-1) %>%
+  rownames_to_column() %>%
+  rename(Group = "rowname",
+         Converted = "yes",
+         `Not converted` = "no") %>%
+  mutate(`Total` = Converted + `Not converted`) %>% 
+  mutate(`Conversion rate (%)` = round2(100 * Converted / (Converted + `Not converted`), 2)) 
+
+# New players
+conversion_in_experiment %>% 
+  filter(new_return == "New Player") %$%
+  table(abtest_group, conversion_in_experiment) %>%
+  as.data.frame.matrix() %>% 
+  dplyr::select(-1) %>%
+  rownames_to_column() %>%
+  rename(Group = "rowname",
+         Converted = "yes",
+         `Not converted` = "no") %>%
+  mutate(`Total` = Converted + `Not converted`) %>%
+  mutate(`Conversion rate (%)` = round2(100 * Converted / (Converted + `Not converted`), 2))
+
+# Returning players: conversion rate very low
+conversion_in_experiment %>% 
+  filter(new_return == "Returning Player") %$%
+  table(abtest_group, conversion_in_experiment) %>%
+  as.data.frame.matrix() %>% 
+  dplyr::select(-1) %>%
+  rownames_to_column() %>%
+  rename(Group = "rowname",
+         Converted = "yes",
+         `Not converted` = "no") %>%
+  mutate(`Total` = Converted + `Not converted`) %>%
+  mutate(`Conversion rate (%)` = round2(100 * Converted / (Converted + `Not converted`), 2))
+```
+
+```{r conversion rate test,include=FALSE}
+# Fisher's exact test
+# odds ration for this test:
+# OR = (number of converted in B/number of not converted in B)/(number of converted in A/number of not converted in A)
+conversion_all <- 
+conversion_in_experiment %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(conversion_in_experiment, c("yes", "no"))) 
+
+conversion_all %>%
+  fisher.test(conf.level = 0.95)
+
+# effect size (chen's) interpretation
+# OR < 1.68 - Very small
+# OR < 1.68 - Very small
+# 1.68 <= OR < 3.47 - Small
+# 3.47 <= OR < 6.71 - Medium
+# OR >= 6.71 - Large
+conversion_all %>%
+  fisher.test(conf.level = 0.95) %>% 
+  effectsize::effectsize()
+
+# New player: H0 not rejected
+conversion_new <-
+conversion_in_experiment %>%
+  filter(new_return == "New Player") %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(conversion_in_experiment, c("yes", "no")))
+
+conversion_new  %>%
+  fisher.test(conf.level = 0.95)
+
+# Returning player: H0 not rejected
+conversion_return <-
+conversion_in_experiment %>%
+  filter(new_return == "Returning Player") %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(conversion_in_experiment, c("yes", "no")))
+
+conversion_return %>%
+  fisher.test(conf.level = 0.95)
+
+# whether adjust alpha (0.05 or 0.02) or not all H0 can't be rejected
+```
+
+```{r day 1 retention, include=FALSE}
+# Generally, more acceptable to have a Type II error than a Type I error - prioritize finding reliable true differences
+
+# retention: 2017-05-04 active cohort
+day0 <-
+  activity %>%
+  inner_join(assignment) %>%
+  filter(activity_date == "2017-05-04") %>%
+  dplyr::select(playerid, activity_date) %>%
+  ungroup() %>%
+  collect()
+
+day1 <-
+  activity %>%
+  inner_join(assignment) %>%
+  filter(activity_date == "2017-05-05") %>%
+  dplyr::select(playerid, activity_date) %>%
+  ungroup() %>%
+  collect()
+
+day7 <-
+  activity %>%
+  inner_join(assignment) %>%
+  filter(activity_date == "2017-05-11") %>%
+  dplyr::select(playerid, activity_date) %>%
+  ungroup() %>%
+  collect()
+
+# adjusted alpha
+retention_alpah_adj = 0.05/5
+
+# day 1 retention data
+retention_day1 <-
+  left_join(day0, day1, by = "playerid", suffix = c("_day0", "_day1")) %>%
+  inner_join(assignment_table, by = "playerid")
+
+# 1 - active on this day;  
+# 0 - not active on this day
+retention_day1 %<>%
+  mutate(activity_date_day0 = as.numeric(!is.na(activity_date_day0))) %>%
+  mutate(activity_date_day1 = as.numeric(!is.na(activity_date_day1)))
+
+# retention overall
+retention_day1 %>%
+  group_by(abtest_group) %>%
+  summarise(day1_retention = sum(activity_date_day1) / sum(activity_date_day0))
+
+# retention by player type
+retention_day1 %>%
+  group_by(abtest_group, player_type) %>%
+  summarise(day1_retention = sum(activity_date_day1) / sum(activity_date_day0))
+
+# Fisher's exact test
+# Bonferroni correction: adjusted alpha 0.05/5 = 0.01
+# odds ration for this test:
+# OR = (number of retained players in B/number of not retained players in B)/(number of retained players in A/number of not retained players in A)
+
+## aggregated: H0 not rejected 
+retention_day1 %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(activity_date_day1, c("1", "0"))) %>%
+  fisher.test(conf.level = 1-retention_alpah_adj)
+
+## new payer: H0 not rejected 
+retention_day1 %>% 
+  filter(player_type=="New Payer") %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(activity_date_day1, c("1", "0"))) %>%
+  fisher.test(conf.level = 1-retention_alpah_adj)
+
+## new non-payer: H0 not rejected 
+retention_day1 %>% 
+  filter(player_type=="New Non-payer") %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(activity_date_day1, c("1", "0"))) %>%
+  fisher.test(conf.level = 1-retention_alpah_adj)
+
+## returning payer: H0 not rejected 
+retention_day1 %>% 
+  filter(player_type=="Returning Payer") %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(activity_date_day1, c("1", "0"))) %>%
+  fisher.test(conf.level = 1-retention_alpah_adj)
+
+## returning non-payer: H0 not rejected 
+retention_day1 %>% 
+  filter(player_type=="Returning Non-payer") %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(activity_date_day1, c("1", "0"))) %>%
+  fisher.test(conf.level = 1-retention_alpah_adj)
+```
+
+```{r day 7 retention, include=FALSE}
+# day 7 retention data
+retention_day7 <-
+  left_join(day0, day7, by = "playerid", suffix = c("_day0", "_day7")) %>%
+  inner_join(assignment_table, by = "playerid")
+
+# 1 - active on this day;  
+# 0 - not active on this day
+retention_day7 %<>%
+  mutate(activity_date_day0 = as.numeric(!is.na(activity_date_day0))) %>%
+  mutate(activity_date_day7 = as.numeric(!is.na(activity_date_day7)))
+
+# retention overall
+retention_day7 %>%
+  group_by(abtest_group) %>%
+  summarise(day7_retention = sum(activity_date_day7) / sum(activity_date_day0))
+
+# retention by player type
+retention_day7 %>%
+  group_by(abtest_group, player_type) %>%
+  summarise(day7_retention = sum(activity_date_day7) / sum(activity_date_day0))
+
+# Fisher's exact test
+# Bonferroni correction: adjusted alpha 0.05/5 = 0.01
+# odds ration for this test:
+# OR = (number of retained players in B/number of not retained players in B)/(number of retained players in A/number of not retained players in A)
+
+## aggregated: H0 not rejected 
+retention_day7 %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(activity_date_day7, c("1", "0"))) %>%
+  fisher.test(conf.level = 1-retention_alpah_adj)
+
+## new payer: H0 not rejected 
+retention_day7 %>% 
+  filter(player_type=="New Payer") %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(activity_date_day7, c("1", "0"))) %>%
+  fisher.test(conf.level = 1-retention_alpah_adj)
+
+## new non-payer: H0 not rejected 
+retention_day7 %>% 
+  filter(player_type=="New Non-payer") %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(activity_date_day7, c("1", "0"))) %>%
+  fisher.test(conf.level = 1-retention_alpah_adj)
+
+## returning payer: H0 not rejected 
+retention_day7 %>% 
+  filter(player_type=="Returning Payer") %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(activity_date_day7, c("1", "0"))) %>%
+  fisher.test(conf.level = 1-retention_alpah_adj)
+
+## returning non-payer: H0 not rejected 
+retention_day7 %>% 
+  filter(player_type=="Returning Non-payer") %$%
+  table(factor(abtest_group, c("B", "A")),
+        factor(activity_date_day7, c("1", "0"))) %>%
+  fisher.test(conf.level = 1-retention_alpah_adj)
+```
+
+```{r average purchases derivation, include=FALSE}
+# average purchases
+purchases <-
+  activity %>%
+  filter(activity_date > "2017-05-03") %>%
+  group_by(playerid) %>%
+  summarize(purchases_mean = mean(purchases, na.rm = TRUE)) %>%
+  ungroup() %>%
+  collect()
+
+# reorder abtest_group factor level
+purchases %<>%
+  inner_join(assignment_table, by = "playerid") %>%
+  mutate(abtest_group = factor(abtest_group, c("B", "A")))
+```
+
+```{r average purchases t-test, include=FALSE}
+# sample size is big, reasonable to assume samples are normally distributed
+# mean and sd in A/B
+purchases %$%
+  tapply(purchases_mean, abtest_group, mean) %>%
+  round2(4)
+
+purchases %$%
+  tapply(purchases_mean, abtest_group, sd) %>%
+  round2(4)
+
+# H0: mean B is equal to mean A
+# H1: mean B is not equal to mean A
+
+# number of t-test done for this metric: 3
+# Bonferroni correction:  alpha adjusted = alpha/3 = 0.167
+purchases_alpha_adj = 0.05 / 3
+
+#### 1: welch's t-test aggregated: H0 rejected ####
+purchases_t_test_all <-
+  purchases %>%
+  do(tidy(
+    t.test(
+      purchases_mean ~ abtest_group,
+      data = .,
+      paired = FALSE,
+      alternative = c("two.sided"),
+      conf.level = 1 - purchases_alpha_adj
+    )
+  ))
+purchases_t_test_all$p.value < purchases_alpha_adj
+
+# (mean B - mean A)/mean A
+purchases_increase_ab <-
+  (100 * (purchases_t_test_all$estimate / purchases_t_test_all$estimate2)) %>% 
+  round2(2)
+
+# cohen's d
+d_purchases_ab <- 
+purchases %$%
+  effsize::cohen.d(purchases_mean ~ factor(abtest_group),
+        pooled=TRUE,
+        paired=FALSE,
+        na.rm=FALSE,
+        conf.level = 1- purchases_alpha_adj)
+
+# power: 1 - beta = 0.8228707
+pwr::pwr.t2n.test(
+  n1 = nA,
+  n2 = nB,
+  d = d_purchases_ab$estimate,
+  sig.level = purchases_alpha_adj)
+
+#### 2: welch's t-test by player type: H0 rejected for returning players only ####
+purchases_t_test_type <-
+  purchases %>%
+  group_by(new_return) %>%
+  do(tidy(
+    t.test(
+      purchases_mean ~ abtest_group,
+      data = .,
+      paired = FALSE,
+      var.equal = FALSE,
+      alternative = c("two.sided"),
+      conf.level = 1 - purchases_alpha_adj
+    )
+  ))
+
+purchases_t_test_type$p.value < purchases_alpha_adj
+
+## returning player
+### (mean B - mean A)/mean A
+purchases_increase_ab_return <-
+  (100 * (purchases_t_test_type$estimate[2] / purchases_t_test_type$estimate2[2])) %>% 
+  round2(2)
+
+### cohen's d
+d_purchases_ab_return <- 
+purchases %>% 
+  filter(new_return =="Returning Player") %$%
+  effsize::cohen.d(purchases_mean ~ factor(abtest_group),
+        pooled=TRUE,
+        paired=FALSE,
+        na.rm=FALSE,
+        conf.level = 1-purchases_alpha_adj)
+
+### power calculation: 1 - beta = 0.8822286
+pwr::pwr.t2n.test(
+  n1 = nA_returnnonpayer+nA_returnpayer,
+  n2 = nB_returnnonpayer+nB_returnpayer,
+  d = d_purchases_ab_return$estimate,
+  sig.level = purchases_alpha_adj)
+
+## new player
+### cohen's d: effect size is negligible
+d_purchases_ab_new <- 
+purchases %>% 
+  filter(new_return =="New Player") %$%
+  effsize::cohen.d(purchases_mean ~ factor(abtest_group),
+        pooled=TRUE,
+        paired=FALSE,
+        na.rm=FALSE,
+        conf.level = 1-purchases_alpha_adj)
+
+### power calculation:  1 - beta = 0.0188311, power is low but effect size is negligible
+pwr::pwr.t2n.test(
+  n1 = nA_newnonpayer + nA_newpayer,
+  n2 = nB_newnonpayer + nB_newpayer,
+  d = d_purchases_ab_new$estimate,
+  sig.level = purchases_alpha_adj)
+```
+
+```{r figure average purchases CI, fig.width=5, fig.height= 2, fig.align='center',fig.cap= "Increase of average purchases per player in B compared to A by player type"}
+# CI plot
+purchases_t_test_type %>%
+  ggplot(aes(x = estimate, y = new_return , color = new_return)) +
+  geom_errorbarh(aes(xmax = conf.high, xmin = conf.low), height = .1) +
+  geom_point(size = 2) +
+  geom_vline(aes(xintercept = 0), linetype = 2, color = "grey") +
+  theme_hc() +
+  scale_color_ghibli_d("YesterdayMedium", direction = -1) +
+  xlab("") +
+  ylab("") +
+  labs(caption = "98%  confidence interval") +
+  theme(legend.position = "none",
+        text = element_text(size=10, family = "serif"))
+```
+
+```{r average game rounds derivation,include=FALSE}
+# average game rounds per active day per player
+gameends <-
+  activity %>%
+  filter(activity_date > "2017-05-03") %>%
+  group_by(playerid) %>%
+  summarize(gameends_mean = mean(gameends, na.rm = TRUE)) %>%
+  ungroup() %>%
+  collect()
+
+# reorder abtest_group factor level
+gameends %<>%
+  inner_join(assignment_table , by = "playerid") %>%
+  mutate(abtest_group = factor(abtest_group, c("B", "A")))
+```
+
+```{r average game rounds t test, include=FALSE}
+# sample size is big, reasonable to assume samples are normally distributed
+# mean and sd in A/B
+gameends %$%
+  tapply(gameends_mean, abtest_group, mean) %>%
+  round2(2)
+
+gameends %$%
+  tapply(gameends_mean, abtest_group, sd) %>%
+  round2(2)
+
+# H0: mean B is equal to mean A
+# H1: mean B is not equal to mean A
+# number of t-test done for this metric: 5
+
+# Bonferroni correction:  alpha adjusted = alpha/5 = 0.01
+
+gameends_alpha_adj = 0.05 / 5
+
+#### 1: welch's t-test aggregated: H0 rejected ####
+gameends_t_test_all <-
+  gameends %>%
+  do(tidy(
+    t.test(
+      gameends_mean ~ abtest_group,
+      data = .,
+      paired = FALSE,
+      var.equal = FALSE,
+      alternative = c("two.sided"),
+      conf.level = 1 - gameends_alpha_adj
+    )
+  ))
+
+# mean decrease in group B
+abs(100*gameends_t_test_all$estimate/gameends_t_test_all$estimate2) %>% round2(2)
+
+# cohen's d
+d_gameends_ab <- 
+gameends %$%
+  effsize::cohen.d(gameends_mean ~ factor(abtest_group),
+        pooled=TRUE,
+        paired=FALSE,
+        na.rm=FALSE,
+        conf.level = 1-gameends_alpha_adj)
+
+# power calculation
+pwr::pwr.t2n.test(
+  n1 = nA,
+  n2 = nB,
+  d = d_gameends_ab$estimate,
+  sig.level = gameends_alpha_adj)
+
+#### 2: welch's t-test by player type: H0 all rejected ####
+gameends_t_test_type <-
+  gameends %>%
+  group_by(player_type) %>%
+  do(tidy(
+    t.test(
+      gameends_mean ~ abtest_group,
+      data = .,
+      paired = FALSE,
+      var.equal = FALSE,
+      alternative = c("two.sided"),
+      conf.level = 1 - gameends_alpha_adj
+    )
+  ))
+
+## new non-payer
+#### cohen's d
+d_gameends_newnonpayer <- 
+gameends %>% 
+  filter(player_type =="New Non-payer") %$%
+  effsize::cohen.d(gameends_mean ~ factor(abtest_group),
+        pooled=TRUE,
+        paired=FALSE,
+        na.rm=FALSE,
+        conf.level = 1-gameends_alpha_adj)
+
+### power calculation
+pwr::pwr.t2n.test(
+  n1 = nA_newnonpayer,
+  n2 = nB_newnonpayer,
+  d = d_gameends_newnonpayer$estimate,
+  sig.level = gameends_alpha_adj)
+
+## new payer
+### cohen's d
+d_gameends_newpayer <- 
+gameends %>% 
+  filter(player_type =="New Payer") %$%
+  effsize::cohen.d(gameends_mean ~ factor(abtest_group),
+        pooled=TRUE,
+        paired=FALSE,
+        na.rm=FALSE,
+        conf.level = 1-gameends_alpha_adj)
+
+### power calculation: 1- beta = 0.8578546
+pwr::pwr.t2n.test(
+  n1 = nA_newpayer,
+  n2 = nB_newpayer,
+  d = d_gameends_newpayer$estimate,
+  sig.level = gameends_alpha_adj)
+
+## return non-payer
+### cohen's d
+d_gameends_returnnonpayer <- 
+gameends %>% 
+  filter(player_type =="Returning Non-payer") %$%
+  effsize::cohen.d(gameends_mean ~ factor(abtest_group),
+        pooled=TRUE,
+        paired=FALSE,
+        na.rm=FALSE,
+        conf.level = 1-gameends_alpha_adj)
+
+### power calculation: 1 - beta = 1 (cool)
+pwr::pwr.t2n.test(
+  n1 = nA_returnnonpayer,
+  n2 = nB_returnnonpayer,
+  d = d_gameends_returnnonpayer$estimate,
+  sig.level = gameends_alpha_adj)
+
+## return payer
+### cohen's d
+d_gameends_returnpayer <- 
+gameends %>% 
+  filter(player_type =="Returning Payer") %$%
+  effsize::cohen.d(gameends_mean ~ factor(abtest_group),
+        pooled=TRUE,
+        paired=FALSE,
+        na.rm=FALSE,
+        conf.level = 1-gameends_alpha_adj)
+
+### power calculation: 1 - beta = 0.8829546
+pwr::pwr.t2n.test(
+  n1 = nA_returnpayer,
+  n2 = nB_returnpayer,
+  d = d_gameends_returnpayer$estimate,
+  sig.level = gameends_alpha_adj)
+```
+
+```{r figure average game rounds CI, fig.width=5, fig.height= 2, fig.align='center', fig.cap= "Decrease of average game rounds per player in B compared to A by player type"}
+# CI plot
+gameends_t_test_type %>% 
+  ggplot(aes(x= estimate, y= player_type , color = player_type)) +
+  geom_errorbarh(aes(xmax = conf.high, xmin = conf.low), height = .1) +
+  geom_point(size=2) +
+  geom_vline(aes(xintercept = 0), linetype =2, color="grey") +
+  theme_hc() +
+  scale_color_ghibli_d("YesterdayMedium", direction = -1) +
+  xlab("") +
+  ylab("") +
+  labs(caption = "99%  confidence interval") +
+  theme(legend.position = "none", text=element_text(size=10, family="serif"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+```
+
+```{r purchase vs game rate, include=FALSE}
+# (>0) purchases out of total game rounds (hints used per game round)
+purchase_game_rate <-
+  activity %>%
+  filter(activity_date > "2017-05-03") %>%
+  filter(purchases > 0) %>%
+  group_by(playerid) %>%
+  summarise(purchase_game_rate = mean(purchases / gameends)) %>%
+  ungroup() %>%
+  collect()
+
+purchase_game_rate %<>%
+  inner_join(assignment_table, by = "playerid")
+
+# sample size is big, reasonable to assume samples are normally distributed
+# mean and sd in A/B
+purchase_game_rate %$%
+  tapply(purchase_game_rate, abtest_group, mean) %>%
+  round2(4)
+
+purchase_game_rate %$%
+  tapply(purchase_game_rate, abtest_group, sd) %>%
+  round2(4)
+
+# H0: mean B is equal to mean A
+# H1: mean B is not equal to mean A
+# number of t-test done for this metric: 5
+
+purchase_game_rate_t_test_all <-
+  purchase_game_rate %>%
+  mutate(abtest_group = factor(abtest_group, c("B", "A"))) %>%
+  do(tidy(
+    t.test(
+      purchase_game_rate ~ abtest_group,
+      data = .,
+      paired = FALSE,
+      var.equal = FALSE,
+      alternative = c("two.sided"),
+      conf.level = 0.95
+    )
+  ))
+
+# increase in purchase gameround rate: per gameround, 5% more purchases are made in B.
+(100*purchase_game_rate_t_test_all$estimate/purchase_game_rate_t_test_all$estimate2)
+
+# sample size
+n_purchase_game_rate <- 
+purchase_game_rate %>% 
+  group_by(abtest_group) %>% 
+  summarise(n=n())
+
+# cohen's d
+d_purchase_game_rate_ab <- 
+purchase_game_rate %$%
+  effsize::cohen.d(purchase_game_rate ~ factor(abtest_group),
+        pooled=TRUE,
+        paired=FALSE,
+        na.rm=FALSE,
+        conf.level = 0.95)
+
+# power calculation: 0.99999
+pwr::pwr.t2n.test(
+  n1 = n_purchase_game_rate$n[1],
+  n2 = n_purchase_game_rate$n[2],
+  d = d_purchase_game_rate_ab$estimate,
+  sig.level = 0.05)
+```
