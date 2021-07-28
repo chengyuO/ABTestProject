@@ -5,5 +5,5 @@ A fictional math puzzle game has been introduced a new experience. This is a mob
 The objective of this project is to analyze the results of an AB test and determine whether the new feature improved the game.
 
 ## Methods
-The data were originally stored on Google BigQuery and queried using R dplyr package. Metrics tested are conversion rates, Day1 retention rate, average gamerounds per player and average purchases per player. Testing method used are Welch's T-test and Fisher's exact test.
+The data were originally stored on Google BigQuery and queried using R dplyr package. Metrics tested are conversion rates, Day1 retention rate, average gamerounds per player and average purchases per player. Testing methods used are Welch's T-test and Fisher's exact test.
 
