@@ -1,4 +1,4 @@
-# Mobile Game AB Testing Analysis
+# Mobile Game AB Test Analysis
 
 ## Introduction:
 A fictional math puzzle game has been introduced a new experience. This is a mobile game where players solve levels of math questions to progress through a map. The game is free to play, but players can purchase hints for a level. To test players’ responses to a new experience, an experiment ran from 2017-05-04 to 2017-05-22.
